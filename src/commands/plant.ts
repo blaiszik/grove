@@ -1,7 +1,7 @@
 import path from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
-import { readConfig, updateConfig, getTreePath, getGroveDir } from '../lib/config.js';
+import { readConfig, updateConfig, getTreePath, getGroveDir, resolveGroveRoot, assertValidTreeName } from '../lib/config.js';
 import {
   branchExists,
   remoteBranchExists,
@@ -17,6 +17,7 @@ import {
 } from '../lib/deps.js';
 import { createCurrentLink } from '../lib/symlink.js';
 import { copyEditorConfigs } from '../lib/editor.js';
+import { getOutputOptions, shouldUseSpinner, printJson } from '../lib/output.js';
 
 interface PlantOptions {
   new?: boolean;
@@ -31,17 +32,24 @@ export async function plant(
   options: PlantOptions
 ): Promise<void> {
   const cwd = process.cwd();
+  const out = getOutputOptions();
   const treeName = name || branch.replace(/\//g, '-');
 
-  const spinner = ora(`Planting tree '${treeName}'...`).start();
+  const spinner = shouldUseSpinner(out) ? ora(`Planting tree '${treeName}'...`).start() : null;
 
   try {
-    const config = await readConfig(cwd);
+    assertValidTreeName(treeName);
+    const groveRoot = await resolveGroveRoot(cwd);
+    const config = await readConfig(groveRoot);
 
     // Check if tree already exists
     if (config.trees[treeName]) {
-      spinner.fail(`Tree '${treeName}' already exists`);
-      console.log(chalk.gray(`Use 'grove tend ${treeName}' to switch to it.`));
+      if (spinner) spinner.fail(`Tree '${treeName}' already exists`);
+      if (out.json) {
+        printJson({ ok: false, error: `Tree '${treeName}' already exists`, name: treeName });
+      } else if (!out.quiet) {
+        console.log(chalk.gray(`Use 'grove tend ${treeName}' to switch to it.`));
+      }
       process.exit(1);
     }
 
@@ -51,13 +59,13 @@ export async function plant(
     const shouldCreate = options.new || (!localExists && !remoteExists);
 
     if (!localExists && remoteExists && !options.new) {
-      spinner.text = `Fetching branch '${branch}' from origin...`;
+      if (spinner) spinner.text = `Fetching branch '${branch}' from origin...`;
       await fetchBranch(branch, config.repo);
     }
 
     // Create the worktree
-    spinner.text = `Creating worktree for '${branch}'...`;
-    const treePath = getTreePath(treeName, cwd);
+    if (spinner) spinner.text = `Creating worktree for '${branch}'...`;
+    const treePath = getTreePath(treeName, groveRoot);
 
     await createWorktree(
       treePath,
@@ -70,16 +78,16 @@ export async function plant(
     );
 
     // Copy editor/AI tool configurations from repo root
-    spinner.text = 'Copying editor configurations...';
+    if (spinner) spinner.text = 'Copying editor configurations...';
     const copiedConfigs = await copyEditorConfigs(config.repo, treePath);
     if (copiedConfigs.length > 0) {
-      spinner.text = `Copied: ${copiedConfigs.join(', ')}`;
+      if (spinner) spinner.text = `Copied: ${copiedConfigs.join(', ')}`;
     }
 
     // Handle dependencies
     const shouldInstall = options.install !== false; // Default to true
     if (shouldInstall) {
-      spinner.text = 'Setting up dependencies...';
+      if (spinner) spinner.text = 'Setting up dependencies...';
 
       // Find an existing tree with node_modules
       let sourceTree: string | null = null;
@@ -94,10 +102,10 @@ export async function plant(
 
       if (manager === 'pnpm') {
         // pnpm: always install with shared store
-        spinner.text = 'Installing dependencies with shared pnpm store...';
+        if (spinner) spinner.text = 'Installing dependencies with shared pnpm store...';
         await installDependencies(manager, treePath, {
           useSharedStore: true,
-          groveDir: cwd,
+          groveDir: groveRoot,
         });
       } else if (sourceTree) {
         // npm/yarn: try to symlink if lockfiles match
@@ -105,20 +113,21 @@ export async function plant(
         const canSymlink = await canSymlinkNodeModules(sourceTreePath, treePath);
 
         if (canSymlink) {
-          spinner.text = `Symlinking node_modules from '${sourceTree}'...`;
+          if (spinner) spinner.text = `Symlinking node_modules from '${sourceTree}'...`;
           await symlinkNodeModules(sourceTreePath, treePath);
         } else {
-          spinner.text = 'Installing dependencies...';
+          if (spinner) spinner.text = 'Installing dependencies...';
           await installDependencies(manager, treePath);
         }
       } else {
         // No existing tree with node_modules, fresh install
-        spinner.text = 'Installing dependencies...';
+        if (spinner) spinner.text = 'Installing dependencies...';
         await installDependencies(manager, treePath);
       }
     }
 
     // Register the tree
+    const createdAt = new Date().toISOString();
     await updateConfig((c) => ({
       ...c,
       trees: {
@@ -126,7 +135,7 @@ export async function plant(
         [treeName]: {
           branch,
           path: treePath,
-          created: new Date().toISOString(),
+          created: createdAt,
         },
       },
     }), cwd);
@@ -140,7 +149,26 @@ export async function plant(
       }), cwd);
     }
 
-    spinner.succeed(`Planted tree '${treeName}'`);
+    if (spinner) spinner.succeed(`Planted tree '${treeName}'`);
+
+    if (out.json) {
+      printJson({
+        ok: true,
+        tree: {
+          name: treeName,
+          branch,
+          path: treePath,
+          created: createdAt,
+        },
+        copiedConfigs,
+        switched: !!options.switch,
+      });
+      return;
+    }
+
+    if (out.quiet) {
+      return;
+    }
 
     console.log('');
     console.log(chalk.green('Tree details:'));
@@ -164,8 +192,13 @@ export async function plant(
       console.log(chalk.gray(`  grove tend ${treeName}        Switch current symlink`));
     }
   } catch (error) {
-    spinner.fail('Failed to plant tree');
-    console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+    if (spinner) spinner.fail('Failed to plant tree');
+    const message = error instanceof Error ? error.message : String(error);
+    if (out.json) {
+      printJson({ ok: false, error: message });
+    } else {
+      console.error(chalk.red(message));
+    }
     process.exit(1);
   }
 }

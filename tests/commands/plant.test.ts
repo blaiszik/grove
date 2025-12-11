@@ -35,7 +35,7 @@ describe('grove plant', () => {
     // Create a branch in the repo
     await createBranch(ctx.repoDir, 'feature-test');
 
-    const result = await runGrove(['plant', 'feature-test'], ctx.repoDir);
+    const result = await runGrove(['plant', 'feature-test', '--no-install'], ctx.repoDir);
 
     expect(result.exitCode).toBe(0);
     // ora spinner output goes to stderr
@@ -50,7 +50,7 @@ describe('grove plant', () => {
   it('creates worktree with custom name', async () => {
     await createBranch(ctx.repoDir, 'feature/auth');
 
-    const result = await runGrove(['plant', 'feature/auth', 'auth'], ctx.repoDir);
+    const result = await runGrove(['plant', 'feature/auth', 'auth', '--no-install'], ctx.repoDir);
 
     expect(result.exitCode).toBe(0);
     // ora spinner output goes to stderr
@@ -63,7 +63,7 @@ describe('grove plant', () => {
   });
 
   it('creates new branch with -n flag', async () => {
-    const result = await runGrove(['plant', '-n', 'new-feature'], ctx.repoDir);
+    const result = await runGrove(['plant', '-n', 'new-feature', '--no-install'], ctx.repoDir);
 
     expect(result.exitCode).toBe(0);
     // ora spinner output goes to stderr
@@ -90,7 +90,7 @@ describe('grove plant', () => {
     });
 
     const result = await runGrove(
-      ['plant', '-n', 'feature-from-develop', '-b', 'develop'],
+      ['plant', '-n', 'feature-from-develop', '-b', 'develop', '--no-install'],
       ctx.repoDir
     );
 
@@ -103,7 +103,7 @@ describe('grove plant', () => {
 
   it('registers tree in config', async () => {
     await createBranch(ctx.repoDir, 'feature-config');
-    await runGrove(['plant', 'feature-config'], ctx.repoDir);
+    await runGrove(['plant', 'feature-config', '--no-install'], ctx.repoDir);
 
     const config = await fs.readJson(path.join(ctx.repoDir, GROVE_DIR, GROVE_CONFIG));
 
@@ -114,7 +114,7 @@ describe('grove plant', () => {
 
   it('switches to new tree with --switch flag', async () => {
     await createBranch(ctx.repoDir, 'feature-switch');
-    await runGrove(['plant', 'feature-switch', '--switch'], ctx.repoDir);
+    await runGrove(['plant', 'feature-switch', '--switch', '--no-install'], ctx.repoDir);
 
     const config = await fs.readJson(path.join(ctx.repoDir, GROVE_DIR, GROVE_CONFIG));
     expect(config.current).toBe('feature-switch');
@@ -137,10 +137,10 @@ describe('grove plant', () => {
 
   it('fails when tree already exists', async () => {
     await createBranch(ctx.repoDir, 'feature-duplicate');
-    await runGrove(['plant', 'feature-duplicate'], ctx.repoDir);
+    await runGrove(['plant', 'feature-duplicate', '--no-install'], ctx.repoDir);
 
     // Try to create again
-    const result = await runGrove(['plant', 'feature-duplicate'], ctx.repoDir);
+    const result = await runGrove(['plant', 'feature-duplicate', '--no-install'], ctx.repoDir);
 
     expect(result.exitCode).toBe(1);
     // ora spinner output goes to stderr
@@ -150,7 +150,7 @@ describe('grove plant', () => {
 
   it('sanitizes branch names with slashes', async () => {
     await createBranch(ctx.repoDir, 'feature/with/slashes');
-    const result = await runGrove(['plant', 'feature/with/slashes'], ctx.repoDir);
+    const result = await runGrove(['plant', 'feature/with/slashes', '--no-install'], ctx.repoDir);
 
     expect(result.exitCode).toBe(0);
 

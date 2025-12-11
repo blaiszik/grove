@@ -1,6 +1,6 @@
 import fs from 'fs-extra';
 import path from 'path';
-import { Framework } from '../types.js';
+import { Framework, PackageManager } from '../types.js';
 
 interface FrameworkConfig {
   devCommand: string;
@@ -80,17 +80,27 @@ export function getFrameworkConfig(framework: Framework): FrameworkConfig {
   return FRAMEWORK_CONFIGS[framework];
 }
 
-export async function getDevCommand(cwd: string = process.cwd()): Promise<string> {
+function runScript(manager: PackageManager, script: string): string {
+  if (manager === 'npm') {
+    return `npm run ${script}`;
+  }
+  return `${manager} ${script}`;
+}
+
+export async function getDevCommand(
+  cwd: string = process.cwd(),
+  manager: PackageManager = 'npm'
+): Promise<string> {
   const packageJsonPath = path.join(cwd, 'package.json');
 
   if (await fs.pathExists(packageJsonPath)) {
     try {
       const pkg = await fs.readJson(packageJsonPath);
       if (pkg.scripts?.dev) {
-        return 'npm run dev';
+        return runScript(manager, 'dev');
       }
       if (pkg.scripts?.start) {
-        return 'npm run start';
+        return runScript(manager, 'start');
       }
     } catch {
       // Fall through to framework detection
@@ -101,14 +111,17 @@ export async function getDevCommand(cwd: string = process.cwd()): Promise<string
   return FRAMEWORK_CONFIGS[framework].devCommand;
 }
 
-export async function getBuildCommand(cwd: string = process.cwd()): Promise<string> {
+export async function getBuildCommand(
+  cwd: string = process.cwd(),
+  manager: PackageManager = 'npm'
+): Promise<string> {
   const packageJsonPath = path.join(cwd, 'package.json');
 
   if (await fs.pathExists(packageJsonPath)) {
     try {
       const pkg = await fs.readJson(packageJsonPath);
       if (pkg.scripts?.build) {
-        return 'npm run build';
+        return runScript(manager, 'build');
       }
     } catch {
       // Fall through to framework detection
@@ -119,17 +132,20 @@ export async function getBuildCommand(cwd: string = process.cwd()): Promise<stri
   return FRAMEWORK_CONFIGS[framework].buildCommand;
 }
 
-export async function getServeCommand(cwd: string = process.cwd()): Promise<string> {
+export async function getServeCommand(
+  cwd: string = process.cwd(),
+  manager: PackageManager = 'npm'
+): Promise<string> {
   const packageJsonPath = path.join(cwd, 'package.json');
 
   if (await fs.pathExists(packageJsonPath)) {
     try {
       const pkg = await fs.readJson(packageJsonPath);
       if (pkg.scripts?.start) {
-        return 'npm run start';
+        return runScript(manager, 'start');
       }
       if (pkg.scripts?.serve) {
-        return 'npm run serve';
+        return runScript(manager, 'serve');
       }
     } catch {
       // Fall through to framework detection

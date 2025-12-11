@@ -1,7 +1,12 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { CURRENT_LINK } from '../types.js';
-import { getTreePath, readConfig } from './config.js';
+import { getTreePath, readConfig, findGroveRoot } from './config.js';
+
+async function getGroveRootOrCwd(cwd: string): Promise<string> {
+  const root = await findGroveRoot(cwd);
+  return root ?? path.resolve(cwd);
+}
 
 export function getCurrentLinkPath(cwd: string = process.cwd()): string {
   return path.join(cwd, CURRENT_LINK);
@@ -11,8 +16,19 @@ export async function createCurrentLink(
   treeName: string,
   cwd: string = process.cwd()
 ): Promise<void> {
-  const linkPath = getCurrentLinkPath(cwd);
-  const targetPath = getTreePath(treeName, cwd);
+  const groveRoot = await getGroveRootOrCwd(cwd);
+  const linkPath = getCurrentLinkPath(groveRoot);
+
+  let targetPath = getTreePath(treeName, groveRoot);
+  try {
+    const config = await readConfig(groveRoot);
+    const tree = config.trees[treeName];
+    if (tree) {
+      targetPath = tree.path;
+    }
+  } catch {
+    // Grove may not be initialized; fall back to computed tree path
+  }
 
   // Remove existing symlink if present
   if (await fs.pathExists(linkPath)) {
@@ -20,34 +36,41 @@ export async function createCurrentLink(
   }
 
   // Create relative symlink
-  const relativePath = path.relative(cwd, targetPath);
+  const relativePathRaw = path.relative(groveRoot, targetPath);
+  const relativePath = relativePathRaw || '.';
   await fs.symlink(relativePath, linkPath);
 }
 
 export async function removeCurrentLink(cwd: string = process.cwd()): Promise<void> {
-  const linkPath = getCurrentLinkPath(cwd);
+  const groveRoot = await getGroveRootOrCwd(cwd);
+  const linkPath = getCurrentLinkPath(groveRoot);
   if (await fs.pathExists(linkPath)) {
     await fs.remove(linkPath);
   }
 }
 
 export async function getCurrentTreeName(cwd: string = process.cwd()): Promise<string | null> {
-  const linkPath = getCurrentLinkPath(cwd);
+  const groveRoot = await getGroveRootOrCwd(cwd);
+  const linkPath = getCurrentLinkPath(groveRoot);
 
   try {
     const target = await fs.readlink(linkPath);
 
     // Handle special case where symlink points to '.' (main repo)
     if (target === '.') {
-      // Find the tree that points to the repo root
-      const config = await readConfig(cwd);
-      for (const [name, tree] of Object.entries(config.trees)) {
-        // The main tree path is the repo root (cwd after normalization)
-        const normalizedTreePath = path.resolve(tree.path);
-        const normalizedCwd = path.resolve(cwd);
-        if (normalizedTreePath === normalizedCwd) {
-          return name;
+      try {
+        // Find the tree that points to the repo root
+        const config = await readConfig(groveRoot);
+        for (const [name, tree] of Object.entries(config.trees)) {
+          // The main tree path is the repo root (cwd after normalization)
+          const normalizedTreePath = path.resolve(tree.path);
+          const normalizedCwd = path.resolve(groveRoot);
+          if (normalizedTreePath === normalizedCwd) {
+            return name;
+          }
         }
+      } catch {
+        // No config; can't resolve main tree name
       }
       return null;
     }
@@ -61,7 +84,8 @@ export async function getCurrentTreeName(cwd: string = process.cwd()): Promise<s
 }
 
 export async function isSymlinkValid(cwd: string = process.cwd()): Promise<boolean> {
-  const linkPath = getCurrentLinkPath(cwd);
+  const groveRoot = await getGroveRootOrCwd(cwd);
+  const linkPath = getCurrentLinkPath(groveRoot);
 
   try {
     const stat = await fs.lstat(linkPath);

@@ -5,6 +5,7 @@ import {
   createTestContext,
   TestContext,
   assertSymlink,
+  safeCleanup,
 } from '../helpers/test-utils.js';
 import {
   getCurrentLinkPath,
@@ -157,8 +158,8 @@ describe('symlink', () => {
       await fs.ensureDir(treePath);
       await createCurrentLink('deleted', ctx.repoDir);
 
-      // Remove the target directory
-      await fs.remove(treePath);
+      // Remove the target directory safely
+      await safeCleanup(treePath);
 
       const valid = await isSymlinkValid(ctx.repoDir);
       expect(valid).toBe(false);

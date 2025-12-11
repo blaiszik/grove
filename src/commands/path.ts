@@ -1,9 +1,12 @@
-import { readConfig, getTreePath } from '../lib/config.js';
+import { readConfig, assertValidTreeName } from '../lib/config.js';
+import { getOutputOptions, printJson } from '../lib/output.js';
 
 export async function getPath(name: string): Promise<void> {
   const cwd = process.cwd();
+  const out = getOutputOptions();
 
   try {
+    assertValidTreeName(name);
     const config = await readConfig(cwd);
 
     // Validate tree exists
@@ -12,7 +15,13 @@ export async function getPath(name: string): Promise<void> {
       process.exit(1);
     }
 
-    const treePath = getTreePath(name, cwd);
+    const tree = config.trees[name];
+    const treePath = tree.path;
+
+    if (out.json) {
+      printJson({ name, path: treePath, branch: tree.branch });
+      return;
+    }
 
     // Output just the path - useful for shell integration
     // e.g., cd $(grove path feature-x)

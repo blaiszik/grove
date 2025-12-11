@@ -1,7 +1,7 @@
 import { execa } from 'execa';
 import fs from 'fs-extra';
 import path from 'path';
-import { getTreePath, readConfig } from './config.js';
+import { readConfig, resolveGroveRoot } from './config.js';
 
 export type Editor = 'cursor' | 'code' | 'claude' | 'zed';
 
@@ -54,7 +54,13 @@ export async function openInEditor(
   editor: Editor,
   cwd: string = process.cwd()
 ): Promise<void> {
-  const treePath = getTreePath(treeName, cwd);
+  const groveRoot = await resolveGroveRoot(cwd);
+  const configFile = await readConfig(groveRoot);
+  const tree = configFile.trees[treeName];
+  if (!tree) {
+    throw new Error(`Tree '${treeName}' not found`);
+  }
+  const treePath = tree.path;
   const config = EDITORS[editor];
 
   if (!config) {
@@ -78,7 +84,13 @@ export async function spawnClaudeCode(
   treeName: string,
   cwd: string = process.cwd()
 ): Promise<void> {
-  const treePath = getTreePath(treeName, cwd);
+  const groveRoot = await resolveGroveRoot(cwd);
+  const configFile = await readConfig(groveRoot);
+  const tree = configFile.trees[treeName];
+  if (!tree) {
+    throw new Error(`Tree '${treeName}' not found`);
+  }
+  const treePath = tree.path;
 
   // Verify tree exists
   if (!(await fs.pathExists(treePath))) {

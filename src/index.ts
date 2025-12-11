@@ -10,11 +10,18 @@ import { status } from './commands/status.js';
 import { open } from './commands/open.js';
 import { spawn } from './commands/spawn.js';
 import { getPath } from './commands/path.js';
+import { ai } from './commands/ai.js';
+import { adopt } from './commands/adopt.js';
+import { prune } from './commands/prune.js';
+import { doctor } from './commands/doctor.js';
+import { claudeSetup } from './commands/claude.js';
 
 program
   .name('grove')
   .description('Git worktree manager with smart dependency handling')
-  .version('1.0.0');
+  .version('1.0.0')
+  .option('--json', 'Output machine-readable JSON')
+  .option('-q, --quiet', 'Suppress non-essential output');
 
 program
   .command('init')
@@ -60,16 +67,52 @@ program
   .action(spawn);
 
 program
+  .command('ai <tool> <name> [args...]')
+  .description('Start an AI coding session in a worktree (tool: claude, codex, run)')
+  .allowUnknownOption(true)
+  .action(ai);
+
+program
   .command('path <name>')
   .description('Print the path to a worktree (for shell integration)')
   .action(getPath);
 
+program
+  .command('adopt <path> [name]')
+  .description('Adopt an existing git worktree into grove')
+  .option('-s, --switch', 'Switch to the adopted tree after adopting')
+  .action(adopt);
+
+program
+  .command('prune')
+  .description('Remove stale grove config entries for missing worktrees')
+  .option('--dry-run', 'Show what would be pruned without changing config')
+  .action(prune);
+
+program
+  .command('doctor')
+  .description('Check grove health and optionally repair')
+  .option('--fix', 'Attempt to repair common issues')
+  .action(doctor);
+
+program
+  .command('claude')
+  .description('Claude Code integration helpers')
+  .command('setup')
+  .description('Scaffold Grove Claude skill and safe permissions')
+  .option('--dry-run', 'Show what would be created without writing')
+  .option('--force', 'Overwrite skill file if it already exists')
+  .option('--no-settings', 'Do not create .claude/settings.local.json')
+  .action(claudeSetup);
+
 // Preview & Status
 program
-  .command('preview <action> [name]')
-  .description('Start/stop preview server (action: tree name or "stop")')
+  .command('preview <action> [names...]')
+  .description('Start/stop preview server (action: tree name(s), "all", or "stop")')
   .option('-d, --dev', 'Run in development mode (default)')
   .option('-b, --build', 'Build and serve in production mode')
+  .option('--port <port>', 'Use a specific port (single-tree only)', (v) => parseInt(v, 10))
+  .option('--all', 'Start previews for all trees')
   .action(preview);
 
 program

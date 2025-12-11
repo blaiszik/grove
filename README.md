@@ -1,5 +1,3 @@
-# Initial commit
-
 # grove
 
 A git worktree manager with smart dependency handling, designed for AI-assisted development workflows.
@@ -11,9 +9,14 @@ A git worktree manager with smart dependency handling, designed for AI-assisted 
 Existing worktree tools require you to run `npm install` in every worktree, duplicating gigabytes of dependencies. grove fixes this:
 
 - **Smart dependency sharing** — Uses pnpm's global store or symlinks `node_modules` when lockfiles match
-- **AI tool integration** — First-class support for Claude Code, Cursor, and VS Code
+- **AI tool integration** — First-class support for Claude Code, Codex CLI, Cursor, and VS Code
 - **Preview servers** — Run multiple branches simultaneously on different ports
 - **Config preservation** — Automatically copies `.claude/`, `.cursor/`, `CLAUDE.md` to new worktrees
+- **Run from anywhere** — Commands work inside any worktree; grove auto-detects the grove root
+
+## Screenshot
+
+![Grove CLI in action](docs/screenshot.png)
 
 ## Installation
 
@@ -42,8 +45,10 @@ grove plant feature-auth
 # Open it in Cursor
 grove open feature-auth
 
-# Or start Claude Code directly in the worktree
-grove spawn feature-auth
+# Start an AI session directly in the worktree
+grove ai claude feature-auth
+# or
+grove ai codex feature-auth
 
 # List all your trees
 grove list
@@ -61,6 +66,17 @@ grove list
 | `grove list` | List all worktrees |
 | `grove uproot <name>` | Remove a worktree |
 | `grove status` | Show grove status and running previews |
+| `grove adopt <path> [name]` | Adopt an existing git worktree into grove |
+| `grove prune` | Remove stale config entries |
+| `grove doctor [--fix]` | Check grove health and optionally repair |
+| `grove claude setup` | Scaffold Claude Code skill + safe permissions |
+
+### Global Options
+
+These flags can be used with any command:
+
+- `--json` — Output machine-readable JSON (supported for non-interactive commands; interactive sessions will error).
+- `-q, --quiet` — Suppress non-essential human output for scripting.
 
 ### AI Coding Integration
 
@@ -68,6 +84,7 @@ grove list
 |---------|-------------|
 | `grove open <name>` | Open worktree in Cursor, VS Code, or Zed |
 | `grove spawn <name>` | Start interactive Claude Code session in worktree |
+| `grove ai <tool> <name> [args...]` | Start AI session (claude, codex, run) in worktree |
 | `grove path <name>` | Print worktree path (for shell integration) |
 
 ### Preview Servers
@@ -105,6 +122,90 @@ grove plant -n feature-auth -b main
 grove plant -n hotfix-123 --switch
 ```
 
+### `grove preview`
+
+```bash
+grove preview <name> [more-names...]
+grove preview all
+grove preview --all
+grove preview stop [names...]
+
+Options:
+  -d, --dev        Run in development mode (default)
+  -b, --build      Build and serve in production mode
+  --port <port>    Use a specific port (errors if unavailable)
+  --all            Start previews for all trees
+```
+
+Examples:
+```bash
+grove preview feature-auth           # Starts dev server on an available port
+grove preview feature-auth feature-payments
+grove preview all                    # Start previews for all trees
+grove preview feature-auth --port 4000
+grove preview feature-auth --build   # Build then serve
+grove preview stop                   # Stop all previews
+grove preview stop feature-auth feature-payments
+```
+
+### `grove ai`
+
+```bash
+grove ai <tool> <name> [args...]
+
+Tools:
+  claude   Start Claude Code in the worktree
+  codex    Start Codex CLI in the worktree
+  run      Run an arbitrary command in the worktree
+```
+
+Examples:
+```bash
+grove ai claude feature-auth
+grove ai codex feature-auth
+grove ai run feature-auth -- npm test
+```
+
+### `grove adopt`
+
+```bash
+grove adopt <path> [name]
+
+Options:
+  -s, --switch   Switch to the adopted tree after adopting
+```
+
+Examples:
+```bash
+grove adopt ../my-existing-worktree
+grove adopt ../detached-worktree hotfix-123 --switch
+```
+
+### `grove prune`
+
+```bash
+grove prune [--dry-run]
+```
+
+Removes stale config entries for worktrees that no longer exist. Does not delete files.
+
+### `grove doctor`
+
+```bash
+grove doctor [--fix]
+```
+
+Checks grove health (missing trees, stale previews, current symlink mismatch). With `--fix`, prunes stale entries and repairs `current`.
+
+### `grove claude setup`
+
+```bash
+grove claude setup [--dry-run] [--force] [--no-settings]
+```
+
+Creates `.claude/skills/grove.md` in your repo and, if missing, a minimal `.claude/settings.local.json` that allows `Bash(grove:*)`.  
+If settings already exist, Grove will not modify them and will print what to add.
+
 ### `grove open`
 
 ```bash
@@ -132,12 +233,11 @@ your-project/
 ├── .grove/                    # Grove configuration (gitignored)
 │   ├── config.json            # Grove settings
 │   ├── trees/                 # All worktrees live here
-│   │   ├── main/
 │   │   ├── feature-auth/
 │   │   └── bugfix-123/
 │   └── shared/
 │       └── pnpm-store/        # Shared pnpm store (if using pnpm)
-├── current -> .grove/trees/main  # Symlink to active worktree
+├── current -> .                 # Symlink to active tree (defaults to main repo)
 └── (your normal repo files)
 ```
 
@@ -163,13 +263,27 @@ grove is designed to work seamlessly with Claude Code:
 
 ```bash
 # Start Claude Code in a specific worktree
-grove spawn feature-auth
+grove ai claude feature-auth
 
 # This opens an interactive Claude session with:
 # - Working directory set to the worktree
 # - All your .claude/ settings preserved
 # - CLAUDE.md context file available
 ```
+
+### Codex CLI
+
+```bash
+grove ai codex feature-auth
+```
+
+### Generic command runner
+
+```bash
+grove ai run feature-auth -- <command> [args...]
+```
+
+All AI sessions inherit helpful environment variables like `GROVE_TREE`, `GROVE_TREE_PATH`, and `GROVE_REPO`.
 
 ### Cursor / VS Code
 
@@ -187,10 +301,13 @@ When you `grove plant` a new worktree, these files are automatically copied:
 
 - `.claude/` — Claude Code settings and commands
 - `.cursor/` — Cursor settings
-- `.cursorrules` — Cursor rules file
-- `CLAUDE.md` — Claude context documentation
 - `.vscode/` — VS Code settings
 - `.zed/` — Zed settings
+- `.idea/` — JetBrains settings
+- `.cursorrules` — Cursor rules file
+- `.clauderules` — Claude rules file (if present)
+- `CLAUDE.md` — Claude/Codex context documentation
+- `cursor.json` — Cursor config file
 
 ## Shell Integration
 
@@ -228,10 +345,10 @@ Run multiple Claude Code instances on different features:
 
 ```bash
 # Terminal 1
-grove spawn feature-auth
+grove ai claude feature-auth
 
 # Terminal 2
-grove spawn feature-payments
+grove ai claude feature-payments
 
 # Terminal 3 - Preview both
 grove preview feature-auth      # Runs on :3000
@@ -241,8 +358,7 @@ grove preview feature-payments  # Runs on :3001
 ### Quick Branch Comparison
 
 ```bash
-# Create worktrees for comparison
-grove plant main
+# Create a worktree for your feature
 grove plant feature-x
 
 # Preview both
@@ -289,7 +405,7 @@ Grove stores its configuration in `.grove/config.json`:
   "trees": {
     "main": {
       "branch": "main",
-      "path": "/path/to/repo/.grove/trees/main",
+      "path": "/path/to/your/repo",
       "created": "2024-01-15T10:30:00.000Z"
     }
   },
@@ -303,6 +419,7 @@ Grove stores its configuration in `.grove/config.json`:
 - Node.js 18+
 - Git 2.17+ (for worktree support)
 - One of: pnpm, npm, or yarn
+- Optional AI tools for `grove ai`: `claude`, `codex`, or Cursor/VS Code for `grove open`
 
 ## License
 

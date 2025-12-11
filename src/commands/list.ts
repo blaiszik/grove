@@ -2,9 +2,11 @@ import chalk from 'chalk';
 import { readConfig } from '../lib/config.js';
 import { getCurrentTreeName, isSymlinkValid } from '../lib/symlink.js';
 import { isPreviewRunning, getRunningPreviews } from '../lib/preview.js';
+import { getOutputOptions, printJson } from '../lib/output.js';
 
 export async function list(): Promise<void> {
   const cwd = process.cwd();
+  const out = getOutputOptions();
 
   try {
     const config = await readConfig(cwd);
@@ -14,8 +16,51 @@ export async function list(): Promise<void> {
     const trees = Object.entries(config.trees);
 
     if (trees.length === 0) {
-      console.log(chalk.yellow('No trees in the grove.'));
-      console.log(chalk.gray('Run `grove plant <branch>` to create one.'));
+      if (out.json) {
+        printJson({
+          repo: config.repo,
+          packageManager: config.packageManager,
+          framework: config.framework,
+          current: currentTree,
+          trees: [],
+        });
+        return;
+      }
+      if (!out.quiet) {
+        console.log(chalk.yellow('No trees in the grove.'));
+        console.log(chalk.gray('Run `grove plant <branch>` to create one.'));
+      }
+      return;
+    }
+
+    if (out.json) {
+      const treesOut = await Promise.all(
+        trees.map(async ([name, info]) => {
+          const preview = previews[name];
+          const running = preview ? await isPreviewRunning(name, cwd) : false;
+          return {
+            name,
+            branch: info.branch,
+            path: info.path,
+            created: info.created,
+            current: name === currentTree,
+            preview: running && preview ? preview : null,
+          };
+        })
+      );
+
+      printJson({
+        repo: config.repo,
+        packageManager: config.packageManager,
+        framework: config.framework,
+        current: currentTree,
+        trees: treesOut,
+      });
+      return;
+    }
+
+    if (out.quiet) {
+      console.log(trees.map(([name]) => name).join('\n'));
       return;
     }
 

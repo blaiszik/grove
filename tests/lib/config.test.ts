@@ -13,6 +13,8 @@ import {
   getSharedDir,
   getTreePath,
   groveExists,
+  findGroveRoot,
+  assertValidTreeName,
   readConfig,
   writeConfig,
   updateConfig,
@@ -72,6 +74,48 @@ describe('config', () => {
 
       const exists = await groveExists(ctx.repoDir);
       expect(exists).toBe(true);
+    });
+  });
+
+  describe('findGroveRoot', () => {
+    it('returns null when grove is not initialized', async () => {
+      const root = await findGroveRoot(ctx.repoDir);
+      expect(root).toBeNull();
+    });
+
+    it('finds grove root from nested directories', async () => {
+      const configPath = getConfigPath(ctx.repoDir);
+      await fs.ensureDir(path.dirname(configPath));
+      await fs.writeJson(configPath, createDefaultConfig(ctx.repoDir));
+
+      const nestedDir = path.join(ctx.repoDir, GROVE_DIR, 'trees', 'feature-x', 'src');
+      await fs.ensureDir(nestedDir);
+
+      const root = await findGroveRoot(nestedDir);
+      expect(root).toBe(ctx.repoDir);
+    });
+  });
+
+  describe('assertValidTreeName', () => {
+    it('accepts simple safe names', () => {
+      expect(() => assertValidTreeName('feature-1')).not.toThrow();
+      expect(() => assertValidTreeName('bugfix_v2')).not.toThrow();
+      expect(() => assertValidTreeName('hotfix.2025-01')).not.toThrow();
+    });
+
+    it('rejects names with path separators', () => {
+      expect(() => assertValidTreeName('feature/x')).toThrow();
+      expect(() => assertValidTreeName('feature\\x')).toThrow();
+    });
+
+    it('rejects traversal-like names', () => {
+      expect(() => assertValidTreeName('..')).toThrow();
+      expect(() => assertValidTreeName('.')).toThrow();
+    });
+
+    it('rejects whitespace or special chars', () => {
+      expect(() => assertValidTreeName('feature x')).toThrow();
+      expect(() => assertValidTreeName('feature@x')).toThrow();
     });
   });
 

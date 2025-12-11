@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import { readConfig, getTreePath } from '../lib/config.js';
+import { readConfig, assertValidTreeName } from '../lib/config.js';
+import { getOutputOptions, shouldUseSpinner, printJson } from '../lib/output.js';
 import {
   Editor,
   openInEditor,
@@ -15,17 +16,23 @@ interface OpenOptions {
 
 export async function open(name: string, options: OpenOptions): Promise<void> {
   const cwd = process.cwd();
+  const out = getOutputOptions();
 
   try {
+    assertValidTreeName(name);
     const config = await readConfig(cwd);
 
     // Validate tree exists
     if (!config.trees[name]) {
-      console.log(chalk.red(`Tree '${name}' not found`));
-      console.log('');
-      console.log(chalk.gray('Available trees:'));
-      for (const treeName of Object.keys(config.trees)) {
-        console.log(chalk.gray(`  - ${treeName}`));
+      if (out.json) {
+        printJson({ ok: false, error: `Tree '${name}' not found` });
+      } else if (!out.quiet) {
+        console.log(chalk.red(`Tree '${name}' not found`));
+        console.log('');
+        console.log(chalk.gray('Available trees:'));
+        for (const treeName of Object.keys(config.trees)) {
+          console.log(chalk.gray(`  - ${treeName}`));
+        }
       }
       process.exit(1);
     }
@@ -36,8 +43,12 @@ export async function open(name: string, options: OpenOptions): Promise<void> {
     if (options.editor) {
       const supported = getSupportedEditors();
       if (!supported.includes(options.editor as Editor)) {
-        console.log(chalk.red(`Unknown editor: ${options.editor}`));
-        console.log(chalk.gray(`Supported: ${supported.join(', ')}`));
+        if (out.json) {
+          printJson({ ok: false, error: `Unknown editor: ${options.editor}` });
+        } else if (!out.quiet) {
+          console.log(chalk.red(`Unknown editor: ${options.editor}`));
+          console.log(chalk.gray(`Supported: ${supported.join(', ')}`));
+        }
         process.exit(1);
       }
       editor = options.editor as Editor;
@@ -46,8 +57,12 @@ export async function open(name: string, options: OpenOptions): Promise<void> {
       const available = await detectAvailableEditors();
 
       if (available.length === 0) {
-        console.log(chalk.red('No supported editors found'));
-        console.log(chalk.gray('Install one of: cursor, code (VS Code), claude, zed'));
+        if (out.json) {
+          printJson({ ok: false, error: 'No supported editors found' });
+        } else if (!out.quiet) {
+          console.log(chalk.red('No supported editors found'));
+          console.log(chalk.gray('Install one of: cursor, code (VS Code), claude, zed'));
+        }
         process.exit(1);
       }
 
@@ -56,18 +71,38 @@ export async function open(name: string, options: OpenOptions): Promise<void> {
       editor = preferenceOrder.find((e) => available.includes(e)) || available[0];
     }
 
-    const spinner = ora(`Opening '${name}' in ${getEditorName(editor)}...`).start();
+    const spinner = shouldUseSpinner(out)
+      ? ora(`Opening '${name}' in ${getEditorName(editor)}...`).start()
+      : null;
 
     await openInEditor(name, editor, cwd);
 
-    const treePath = getTreePath(name, cwd);
-    spinner.succeed(`Opened '${name}' in ${getEditorName(editor)}`);
+    const treePath = config.trees[name].path;
+    if (spinner) spinner.succeed(`Opened '${name}' in ${getEditorName(editor)}`);
+
+    if (out.json) {
+      printJson({
+        ok: true,
+        opened: { name, path: treePath, branch: config.trees[name].branch },
+        editor,
+      });
+      return;
+    }
+
+    if (out.quiet) {
+      return;
+    }
 
     console.log('');
     console.log(chalk.gray(`  Path: ${treePath}`));
     console.log(chalk.gray(`  Branch: ${config.trees[name].branch}`));
   } catch (error) {
-    console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+    const message = error instanceof Error ? error.message : String(error);
+    if (out.json) {
+      printJson({ ok: false, error: message });
+    } else {
+      console.error(chalk.red(message));
+    }
     process.exit(1);
   }
 }
