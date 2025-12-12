@@ -2137,8 +2137,7 @@ async function claudeSetup(options = {}) {
     const groveRoot = await resolveGroveRoot(cwd);
     const claudeDir = path11.join(groveRoot, ".claude");
     const skillsDir = path11.join(claudeDir, "skills");
-    const groveSkillDir = path11.join(skillsDir, "grove");
-    const skillPath = path11.join(groveSkillDir, "SKILL.md");
+    const skillPath = path11.join(skillsDir, "grove.md");
     const settingsPath = path11.join(claudeDir, "settings.local.json");
     const createSettings = options.settings !== false;
     const dryRun = !!options.dryRun;
@@ -2174,7 +2173,7 @@ async function claudeSetup(options = {}) {
       return;
     }
     if (!skillExists || force) {
-      await fs8.ensureDir(groveSkillDir);
+      await fs8.ensureDir(skillsDir);
       await fs8.writeFile(skillPath, DEFAULT_GROVE_SKILL_MD, "utf-8");
     }
     if (createSettings && !settingsExists) {
@@ -2216,6 +2215,266 @@ async function claudeSetup(options = {}) {
   }
 }
 
+// src/commands/merge.ts
+import path12 from "path";
+import fs9 from "fs-extra";
+import chalk15 from "chalk";
+import ora11 from "ora";
+import { execa as execa7 } from "execa";
+async function mergeAssist(sourceName, targetName, options) {
+  const cwd = process.cwd();
+  const out = getOutputOptions();
+  const spinner = shouldUseSpinner(out) ? ora11("Preparing merge assist...").start() : null;
+  const strategy = options.strategy?.toLowerCase() === "rebase" ? "rebase" : "merge";
+  const shouldFetch = options.fetch !== false;
+  let groveRoot = null;
+  let config = null;
+  let sourceTree = null;
+  let targetTree = null;
+  let targetBranch = null;
+  let stagingDir = null;
+  let stagingBranch = null;
+  let stagingCreated = false;
+  let keepTemp = options.keepTemp ?? false;
+  let conflictSummary = null;
+  try {
+    assertValidTreeName(sourceName);
+    groveRoot = await resolveGroveRoot(cwd);
+    config = await readConfig(groveRoot);
+    sourceTree = config.trees[sourceName];
+    if (!sourceTree) {
+      throw new Error(`Tree '${sourceName}' not found. Run 'grove list' to see available trees.`);
+    }
+    await ensureTreePathExists(sourceTree.path, sourceName);
+    if (sourceName === targetName) {
+      throw new Error("Source and target must be different.");
+    }
+    targetTree = config.trees[targetName] ?? null;
+    if (targetTree) {
+      targetBranch = targetTree.branch;
+    } else {
+      targetBranch = targetName;
+    }
+    if (!targetBranch) {
+      throw new Error(`Unable to resolve target '${targetName}'.`);
+    }
+    if (options.apply) {
+      if (spinner) spinner.text = "Checking source tree status...";
+      const clean = await isWorkingTreeClean(sourceTree.path);
+      if (!clean) {
+        throw new Error(
+          `Tree '${sourceName}' has uncommitted changes. Commit or stash before using --apply.`
+        );
+      }
+    }
+    const repoDir = config.repo;
+    if (shouldFetch) {
+      if (spinner) spinner.text = `Fetching latest '${targetBranch}'...`;
+      await fetchBranchSafe(targetBranch, repoDir, spinner, out);
+    }
+    const targetExists = await branchExists(targetBranch, repoDir);
+    if (!targetExists) {
+      throw new Error(`Branch '${targetBranch}' not found. Create it or specify a tree name.`);
+    }
+    const stagingBase = path12.join(getTreesDir(groveRoot), ".merge-assist");
+    await fs9.ensureDir(stagingBase);
+    const timestamp = Date.now().toString(36);
+    const stagingName = `${sanitizeForPath(sourceName)}-onto-${sanitizeForPath(targetBranch)}-${timestamp}`;
+    stagingDir = path12.join(stagingBase, stagingName);
+    stagingBranch = `grove/merge/${sanitizeForBranch(
+      `${sourceTree.branch}-onto-${targetBranch}-${timestamp}`
+    )}`;
+    if (spinner) spinner.text = "Creating staging worktree...";
+    await createWorktree(
+      stagingDir,
+      stagingBranch,
+      {
+        createBranch: true,
+        baseBranch: sourceTree.branch
+      },
+      repoDir
+    );
+    stagingCreated = true;
+    if (spinner) spinner.text = `${capitalize(strategy)}ing '${sourceTree.branch}' with '${targetBranch}'...`;
+    await runIntegration(strategy, targetBranch, stagingDir);
+    if (spinner) spinner.text = "Recording result...";
+    const resultCommit = await getHeadCommit(stagingDir);
+    if (options.apply) {
+      if (spinner) spinner.text = "Applying result back to source tree...";
+      await applyResultToSource(sourceTree.path, sourceTree.branch, resultCommit, repoDir);
+    }
+    if (!keepTemp) {
+      if (spinner) spinner.text = "Cleaning up staging worktree...";
+      await cleanupTempWorktree(repoDir, stagingDir, stagingBranch);
+      stagingDir = null;
+      stagingBranch = null;
+    }
+    if (spinner) spinner.succeed("Merge assist completed");
+    if (out.json) {
+      printJson({
+        ok: true,
+        strategy,
+        applied: !!options.apply,
+        source: {
+          name: sourceName,
+          branch: sourceTree.branch,
+          path: sourceTree.path
+        },
+        target: {
+          input: targetName,
+          branch: targetBranch,
+          tree: targetTree ? targetName : null
+        },
+        staging: stagingDir ? { kept: true, path: stagingDir, branch: stagingBranch } : { kept: false }
+      });
+      return;
+    }
+    if (!out.quiet) {
+      console.log("");
+      console.log(chalk15.green("Merge assist complete!"));
+      if (options.apply) {
+        console.log(chalk15.gray(`  Tree '${sourceName}' now includes '${targetBranch}'.`));
+      } else if (stagingDir) {
+        console.log(chalk15.gray(`  Review result in staging worktree: ${stagingDir}`));
+      } else {
+        console.log(chalk15.gray("  Staging worktree removed."));
+      }
+      console.log("");
+    }
+  } catch (error) {
+    if (spinner) spinner.fail("Merge assist failed");
+    if (conflictSummary === null && stagingDir) {
+      conflictSummary = await summarizeConflicts(stagingDir, stagingBranch);
+      if (conflictSummary) {
+        keepTemp = true;
+      }
+    }
+    if (stagingCreated && !keepTemp && groveRoot && config && stagingDir) {
+      await cleanupTempWorktree(config.repo, stagingDir, stagingBranch);
+    }
+    const message = formatErrorMessage(error);
+    if (out.json) {
+      printJson({
+        ok: false,
+        error: message,
+        strategy,
+        source: sourceTree ? { name: sourceName, branch: sourceTree.branch, path: sourceTree.path } : null,
+        target: targetBranch ? { input: targetName, branch: targetBranch } : null,
+        staging: stagingDir ? { kept: true, path: stagingDir, branch: stagingBranch } : null,
+        conflicts: conflictSummary?.conflicts ?? []
+      });
+    } else if (!out.quiet) {
+      console.error(chalk15.red(message));
+      if (conflictSummary?.conflicts?.length) {
+        console.log("");
+        console.log(chalk15.yellow("Conflicts detected:"));
+        conflictSummary.conflicts.slice(0, 10).forEach((line) => {
+          console.log(chalk15.gray(`  ${line}`));
+        });
+        if (conflictSummary.conflicts.length > 10) {
+          console.log(chalk15.gray("  ..."));
+        }
+        console.log("");
+      }
+      if (stagingDir) {
+        console.log(chalk15.cyan("Resolve conflicts in the staging worktree:"));
+        console.log(chalk15.gray(`  cd ${stagingDir}`));
+        console.log(
+          chalk15.gray(
+            strategy === "rebase" ? "  git status && git rebase --continue" : "  git status && git merge --continue"
+          )
+        );
+        console.log(chalk15.gray("  (run again when clean or push result back manually)"));
+      }
+    }
+    process.exit(1);
+  }
+}
+async function ensureTreePathExists(treePath, treeName) {
+  if (!await fs9.pathExists(treePath)) {
+    throw new Error(
+      `Tree '${treeName}' points to '${treePath}', but it does not exist on disk. Run 'grove doctor --fix'.`
+    );
+  }
+}
+async function isWorkingTreeClean(dir) {
+  const { stdout } = await execa7("git", ["status", "--porcelain"], { cwd: dir });
+  return stdout.trim().length === 0;
+}
+async function fetchBranchSafe(branch, repoDir, spinner, out) {
+  try {
+    await fetchBranch(branch, repoDir);
+  } catch (error) {
+    const message = formatErrorMessage(error);
+    if (spinner) {
+      spinner.text = `Fetch skipped for '${branch}' (${message})`;
+    } else if (!out.quiet && !out.json) {
+      console.log(chalk15.yellow(`Warning: could not fetch origin/${branch}: ${message}`));
+    }
+  }
+}
+async function runIntegration(strategy, targetBranch, cwd) {
+  const args = strategy === "rebase" ? ["rebase", targetBranch] : ["merge", targetBranch];
+  try {
+    await execa7("git", args, { cwd });
+  } catch (error) {
+    throw error;
+  }
+}
+async function getHeadCommit(cwd) {
+  const { stdout } = await execa7("git", ["rev-parse", "HEAD"], { cwd });
+  return stdout.trim();
+}
+async function applyResultToSource(treePath, branch, commit, repoDir) {
+  await execa7("git", ["update-ref", `refs/heads/${branch}`, commit], { cwd: repoDir });
+  await execa7("git", ["checkout", branch], { cwd: treePath });
+  await execa7("git", ["reset", "--hard", commit], { cwd: treePath });
+}
+async function cleanupTempWorktree(repoDir, worktreePath, tempBranch) {
+  try {
+    await removeWorktree(worktreePath, { force: true }, repoDir);
+  } catch {
+    if (await fs9.pathExists(worktreePath)) {
+      await fs9.remove(worktreePath);
+    }
+  }
+  if (tempBranch) {
+    try {
+      await execa7("git", ["branch", "-D", tempBranch], { cwd: repoDir });
+    } catch {
+    }
+  }
+}
+function sanitizeForPath(value) {
+  return value.replace(/[^A-Za-z0-9._-]/g, "-");
+}
+function sanitizeForBranch(value) {
+  return value.replace(/[^A-Za-z0-9/_-]/g, "-").replace(/\/+/g, "/");
+}
+async function summarizeConflicts(stagingPath, stagingBranch) {
+  try {
+    const { stdout } = await execa7("git", ["status", "--short"], { cwd: stagingPath });
+    const conflictLines = stdout.split("\n").map((line) => line.trim()).filter((line) => /^(AA|DD|UU|UD|DU|UA|AU)/.test(line));
+    if (conflictLines.length === 0) {
+      return null;
+    }
+    return {
+      conflicts: conflictLines,
+      stagingPath,
+      stagingBranch
+    };
+  } catch {
+    return null;
+  }
+}
+function capitalize(value) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+function formatErrorMessage(error) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 // src/index.ts
 program.name("grove").description("Git worktree manager with smart dependency handling").version("1.0.0").option("--json", "Output machine-readable JSON").option("-q, --quiet", "Suppress non-essential output");
 program.command("init").description("Initialize grove in current repository").action(init);
@@ -2231,6 +2490,15 @@ program.command("adopt <path> [name]").description("Adopt an existing git worktr
 program.command("prune").description("Remove stale grove config entries for missing worktrees").option("--dry-run", "Show what would be pruned without changing config").action(prune);
 program.command("doctor").description("Check grove health and optionally repair").option("--fix", "Attempt to repair common issues").action(doctor);
 program.command("claude").description("Claude Code integration helpers").command("setup").description("Scaffold Grove Claude skill and safe permissions").option("--dry-run", "Show what would be created without writing").option("--force", "Overwrite skill file if it already exists").option("--no-settings", "Do not create .claude/settings.local.json").action(claudeSetup);
+program.command("merge <sourceTree> <target>").description("Create a temporary integration worktree to merge or rebase a tree onto a target branch/tree").option("-r, --rebase", "Use rebase instead of merge").option("-s, --strategy <strategy>", "Integration strategy (merge or rebase)").option("--apply", "Apply the clean result back to the source tree").option("--keep-temp", "Keep the staging worktree even on success").option("--no-fetch", "Skip fetching the target branch before integrating").action((sourceTree, target, opts) => {
+  const strategy = opts.rebase ? "rebase" : opts.strategy;
+  mergeAssist(sourceTree, target, {
+    strategy,
+    apply: opts.apply,
+    keepTemp: opts.keepTemp,
+    fetch: opts.fetch
+  });
+});
 program.command("preview <action> [names...]").description('Start/stop preview server (action: tree name(s), "all", or "stop")').option("-d, --dev", "Run in development mode (default)").option("-b, --build", "Build and serve in production mode").option("--port <port>", "Use a specific port (single-tree only)", (v) => parseInt(v, 10)).option("--all", "Start previews for all trees").action(preview);
 program.command("status").description("Show grove status and running previews").action(status);
 program.addHelpText("after", `

@@ -28,8 +28,8 @@ npm install
 npm run build
 npm link
 
-# Or install from npm (when published)
-npm install -g grove-cli
+# Or install the published prototype tag (when available)
+npm install -g grove-cli@prototype
 ```
 
 ## Quick Start
@@ -63,6 +63,7 @@ grove list
 | `grove init` | Initialize grove in current git repository |
 | `grove plant <branch> [name]` | Create a new worktree |
 | `grove tend <name>` | Switch the `current` symlink to a worktree |
+| `grove merge <source> <target>` | Run Merge Assist to merge/rebase a tree onto a target branch/tree |
 | `grove list` | List all worktrees |
 | `grove uproot <name>` | Remove a worktree |
 | `grove status` | Show grove status and running previews |
@@ -147,6 +148,50 @@ grove preview feature-auth --build   # Build then serve
 grove preview stop                   # Stop all previews
 grove preview stop feature-auth feature-payments
 ```
+
+## Grove Merge Assist
+
+Keep your feature trees in sync with their targets without manual `git worktree` juggling:
+
+```bash
+grove merge <sourceTree> <target>
+```
+
+- `<sourceTree>` is the tree name from `grove list` (e.g. `feature-auth`).
+- `<target>` can be another tree name or any branch/ref (`main`, `release/1.2`, `origin/main`, etc.).
+
+Grove will:
+
+1. Spin up a temporary integration worktree tracking the source branch.
+2. Merge or rebase the target ref into it.
+3. Show a concise conflict digest if things go sideways.
+4. Optionally apply the clean result back to the source tree so your AI session keeps flowing.
+
+Common options:
+
+| Flag | Purpose |
+|------|---------|
+| `-r, --rebase` / `--strategy <merge|rebase>` | Choose rebase instead of merge. |
+| `--apply` | Fast-forward the source tree to the integrated commit (requires a clean tree). |
+| `--keep-temp` | Leave the staging worktree on disk even after success. |
+| `--no-fetch` | Skip fetching the target ref before merging (default fetches). |
+
+Examples:
+
+```bash
+# Merge latest main into the feature tree and keep staging around for inspection
+grove merge feature-auth main --keep-temp
+
+# Rebase the feature tree onto release branch and apply the result back to the tree
+grove merge feature-payments release/1.2 --rebase --apply
+
+# Use JSON output for scripting
+grove merge feature-auth main --json --no-fetch
+```
+
+If conflicts occur, Grove preserves the staging worktree path so you (or your AI assistant) can finish the resolution and rerun the command or push manually.
+
+> Note: `--apply` requires the source tree to have no uncommitted changes.
 
 ### `grove ai`
 
@@ -413,6 +458,17 @@ Grove stores its configuration in `.grove/config.json`:
   "previews": {}
 }
 ```
+
+## Publishing (Prototype Tag)
+
+Until Grove reaches a stable release, publish builds to npm under the `prototype` dist-tag. Steps:
+
+1. Ensure you are logged into npm (`npm login`) and the working tree is clean.
+2. Bump the version if needed (`npm version prerelease --preid prototype` or similar).
+3. Run the full test suite: `npm run test`.
+4. Publish with the helper script: `npm run release:prototype`.
+
+The script runs tests again for safety and then executes `npm publish --tag prototype`. Because `package.json` includes `publishConfig.tag = "prototype"`, publishing without the script also defaults to that tag. Consumers can install via `npm install -g grove-cli@prototype`.
 
 ## Requirements
 

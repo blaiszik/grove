@@ -15,6 +15,7 @@ import { adopt } from './commands/adopt.js';
 import { prune } from './commands/prune.js';
 import { doctor } from './commands/doctor.js';
 import { claudeSetup } from './commands/claude.js';
+import { mergeAssist } from './commands/merge.js';
 
 program
   .name('grove')
@@ -104,6 +105,24 @@ program
   .option('--force', 'Overwrite skill file if it already exists')
   .option('--no-settings', 'Do not create .claude/settings.local.json')
   .action(claudeSetup);
+
+program
+  .command('merge <sourceTree> <target>')
+  .description('Create a temporary integration worktree to merge or rebase a tree onto a target branch/tree')
+  .option('-r, --rebase', 'Use rebase instead of merge')
+  .option('-s, --strategy <strategy>', 'Integration strategy (merge or rebase)')
+  .option('--apply', 'Apply the clean result back to the source tree')
+  .option('--keep-temp', 'Keep the staging worktree even on success')
+  .option('--no-fetch', 'Skip fetching the target branch before integrating')
+  .action((sourceTree, target, opts) => {
+    const strategy = opts.rebase ? 'rebase' : opts.strategy;
+    mergeAssist(sourceTree, target, {
+      strategy,
+      apply: opts.apply,
+      keepTemp: opts.keepTemp,
+      fetch: opts.fetch,
+    });
+  });
 
 // Preview & Status
 program

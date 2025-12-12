@@ -87,8 +87,7 @@ export async function claudeSetup(options: ClaudeSetupOptions = {}): Promise<voi
     const groveRoot = await resolveGroveRoot(cwd);
     const claudeDir = path.join(groveRoot, '.claude');
     const skillsDir = path.join(claudeDir, 'skills');
-    const groveSkillDir = path.join(skillsDir, 'grove');
-    const skillPath = path.join(groveSkillDir, 'SKILL.md');
+    const skillPath = path.join(skillsDir, 'grove.md');
     const settingsPath = path.join(claudeDir, 'settings.local.json');
 
     const createSettings = options.settings !== false;
@@ -132,7 +131,7 @@ export async function claudeSetup(options: ClaudeSetupOptions = {}): Promise<voi
 
     // Write skill
     if (!skillExists || force) {
-      await fs.ensureDir(groveSkillDir);
+      await fs.ensureDir(skillsDir);
       await fs.writeFile(skillPath, DEFAULT_GROVE_SKILL_MD, 'utf-8');
     }
 
@@ -179,4 +178,3 @@ export async function claudeSetup(options: ClaudeSetupOptions = {}): Promise<voi
     process.exit(1);
   }
 }
-
