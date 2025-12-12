@@ -2,35 +2,48 @@
 
 A git worktree manager with smart dependency handling, designed for AI-assisted development workflows.
 
-**grove** solves the friction of working with multiple git branches simultaneously—especially for JavaScript/TypeScript projects where `node_modules` makes switching expensive.
+## The Problem
 
-## Why grove?
+Modern development often requires working on multiple branches simultaneously—reviewing a PR while fixing a bug, comparing two implementations side-by-side, or running parallel AI coding sessions on different features. Git worktrees solve this by letting you check out multiple branches at once, each in its own directory.
 
-Existing worktree tools require you to run `npm install` in every worktree, duplicating gigabytes of dependencies. grove fixes this:
+**But for JavaScript/TypeScript projects, worktrees are painful.** Each worktree needs its own `node_modules`, which means:
+- Running `npm install` in every worktree (slow, especially with large dependency trees)
+- Duplicating gigabytes of packages across worktrees
+- Waiting for installs before you can start working
+- Managing preview servers on different ports manually
+- Losing your editor/AI tool configurations when switching contexts
 
-- **Smart dependency sharing** — Uses pnpm's global store or symlinks `node_modules` when lockfiles match
-- **AI tool integration** — First-class support for Claude Code, Codex CLI, Cursor, and VS Code
-- **Preview servers** — Run multiple branches simultaneously on different ports
-- **Config preservation** — Automatically copies `.claude/`, `.cursor/`, `CLAUDE.md` to new worktrees
-- **Run from anywhere** — Commands work inside any worktree; grove auto-detects the grove root
+**grove eliminates this friction.** It wraps git worktrees with intelligent dependency handling and first-class support for modern AI coding tools.
 
-## Screenshot
+## Key Features
 
-![Grove CLI in action](docs/screenshot.png)
+- **Smart dependency sharing** — Uses pnpm's shared store or symlinks `node_modules` when lockfiles match, avoiding duplicate installs
+- **AI tool integration** — First-class support for Claude Code, Codex CLI, Cursor, VS Code, and Zed
+- **Preview servers** — Run multiple branches simultaneously on different ports with automatic port allocation
+- **Config preservation** — Automatically copies `.claude/`, `.cursor/`, `.vscode/`, `CLAUDE.md` and other tool configs to new worktrees
+- **Run from anywhere** — Commands work from any subdirectory; grove auto-detects the grove root
+- **Machine-readable output** — All commands support `--json` for scripting and automation
 
 ## Installation
 
 ```bash
-# Clone and install globally
-git clone https://github.com/yourusername/grove.git
+# Install the published prototype from npm
+npm install -g grove-cli@prototype
+
+# Or clone and install from source
+git clone https://github.com/blaiszik/grove.git
 cd grove
 npm install
 npm run build
 npm link
-
-# Or install the published prototype tag (when available)
-npm install -g grove-cli@prototype
 ```
+
+## Concepts
+
+- **Tree**: A git worktree managed by grove. Each tree is a separate checkout of a branch stored in `.grove/trees/`.
+- **Grove**: The collection of trees for a repository, managed by `.grove/config.json`.
+- **Current**: A symlink (`current`) that points to your active tree. Use `grove tend` to switch it.
+- **Main tree**: Your original repository directory, automatically registered as `main` when you run `grove init`.
 
 ## Quick Start
 
@@ -42,16 +55,23 @@ grove init
 # Create a worktree for a feature branch
 grove plant feature-auth
 
-# Open it in Cursor
-grove open feature-auth
-
-# Start an AI session directly in the worktree
-grove ai claude feature-auth
-# or
-grove ai codex feature-auth
-
 # List all your trees
 grove list
+
+# Open the worktree in your editor
+grove open feature-auth
+
+# Or start an AI coding session directly
+grove ai claude feature-auth
+
+# Switch the 'current' symlink to point to this tree
+grove tend feature-auth
+
+# Start a dev server for the worktree
+grove preview feature-auth
+
+# When you're done, remove the worktree
+grove uproot feature-auth
 ```
 
 ## Commands
@@ -276,29 +296,46 @@ After running `grove init`, your project looks like:
 ```
 your-project/
 ├── .grove/                    # Grove configuration (gitignored)
-│   ├── config.json            # Grove settings
+│   ├── config.json            # Grove settings and tree registry
 │   ├── trees/                 # All worktrees live here
-│   │   ├── feature-auth/
-│   │   └── bugfix-123/
+│   │   ├── feature-auth/      # A worktree for feature-auth branch
+│   │   └── bugfix-123/        # A worktree for bugfix-123 branch
 │   └── shared/
 │       └── pnpm-store/        # Shared pnpm store (if using pnpm)
-├── current -> .                 # Symlink to active tree (defaults to main repo)
+├── current -> .               # Symlink to active tree (defaults to main repo)
 └── (your normal repo files)
 ```
 
+### The "main" Tree
+
+When you run `grove init`, grove registers your current repository directory as a special tree called `main`. This isn't a worktree—it's your original repo. The `main` tree:
+- Always exists and cannot be removed with `grove uproot`
+- Points to your original repository directory (not `.grove/trees/`)
+- Is set as the initial `current` tree
+
+Other trees created with `grove plant` are actual git worktrees stored in `.grove/trees/`.
+
 ## Smart Dependency Handling
 
-grove detects your package manager and optimizes accordingly:
+grove detects your package manager (by looking for lockfiles) and optimizes dependency installation accordingly:
 
 ### pnpm (Recommended)
 - Creates a shared store in `.grove/shared/pnpm-store`
 - All worktrees share the same packages via hard links
-- `pnpm install` is fast because packages are already cached
+- `pnpm install` is extremely fast because packages are already downloaded
+- This is the most efficient option—consider switching to pnpm if you haven't already
 
 ### npm / yarn
-- Compares lockfile hashes between worktrees
-- If lockfiles match, symlinks `node_modules` from existing worktree
-- If lockfiles differ, runs fresh install
+- Compares lockfile hashes (SHA-256) between worktrees
+- If lockfiles match exactly, creates a symlink from the existing worktree's `node_modules`
+- If lockfiles differ, runs a fresh install (with `--prefer-offline` to use cached packages)
+- Symlinked `node_modules` means zero disk usage for identical dependencies
+
+### Skipping Installation
+Use `--no-install` with `grove plant` if you want to manage dependencies yourself:
+```bash
+grove plant feature-x --no-install
+```
 
 ## AI Tool Integration
 
@@ -328,7 +365,12 @@ grove ai codex feature-auth
 grove ai run feature-auth -- <command> [args...]
 ```
 
-All AI sessions inherit helpful environment variables like `GROVE_TREE`, `GROVE_TREE_PATH`, and `GROVE_REPO`.
+All AI sessions inherit helpful environment variables:
+- `GROVE_TREE` — Name of the current tree
+- `GROVE_TREE_PATH` — Absolute path to the worktree
+- `GROVE_BRANCH` — Git branch of the worktree
+- `GROVE_ROOT` — Path to the grove root directory
+- `GROVE_REPO` — Path to the main repository
 
 ### Cursor / VS Code
 
@@ -342,17 +384,22 @@ grove open feature-auth -e code
 
 ### Preserved Configurations
 
-When you `grove plant` a new worktree, these files are automatically copied:
+When you `grove plant` a new worktree, these files and directories are automatically copied from the main repo:
 
-- `.claude/` — Claude Code settings and commands
-- `.cursor/` — Cursor settings
+**Directories:**
+- `.claude/` — Claude Code settings, commands, and skills
+- `.cursor/` — Cursor settings and rules
 - `.vscode/` — VS Code settings
 - `.zed/` — Zed settings
-- `.idea/` — JetBrains settings
+- `.idea/` — JetBrains IDE settings
+
+**Files:**
 - `.cursorrules` — Cursor rules file
-- `.clauderules` — Claude rules file (if present)
-- `CLAUDE.md` — Claude/Codex context documentation
-- `cursor.json` — Cursor config file
+- `.clauderules` — Claude rules file
+- `CLAUDE.md` — Claude Code / Codex context documentation
+- `cursor.json` — Cursor configuration
+
+This ensures your AI tools and editors have the same context in every worktree without manual copying.
 
 ## Shell Integration
 
@@ -395,9 +442,8 @@ grove ai claude feature-auth
 # Terminal 2
 grove ai claude feature-payments
 
-# Terminal 3 - Preview both
-grove preview feature-auth      # Runs on :3000
-grove preview feature-payments  # Runs on :3001
+# Terminal 3 - Preview both (ports auto-assigned)
+grove preview feature-auth feature-payments
 ```
 
 ### Quick Branch Comparison
@@ -406,11 +452,10 @@ grove preview feature-payments  # Runs on :3001
 # Create a worktree for your feature
 grove plant feature-x
 
-# Preview both
-grove preview main        # :3000
-grove preview feature-x   # :3001
+# Preview both branches side-by-side (ports auto-assigned)
+grove preview main feature-x
 
-# Open browser tabs to compare
+# Open browser tabs to compare the URLs printed by grove
 ```
 
 ### Hotfix Workflow
@@ -428,14 +473,16 @@ grove uproot hotfix-critical
 
 ## Framework Support
 
-grove detects and handles framework-specific needs:
+grove automatically detects your framework and uses appropriate commands and ports:
 
-| Framework | Dev Command | Cache Directory |
-|-----------|-------------|-----------------|
-| Next.js | `next dev` | `.next/` |
-| Vite | `vite` | `.vite/` |
-| Create React App | `react-scripts start` | — |
-| Generic | `npm run dev` | — |
+| Framework | Dev Command | Build Command | Default Port | Cache Directory |
+|-----------|-------------|---------------|--------------|-----------------|
+| Next.js | `next dev` | `next build` | 3000 | `.next/` |
+| Vite | `vite` | `vite build` | 5173 | `.vite/` |
+| Create React App | `react-scripts start` | `react-scripts build` | 3000 | — |
+| Generic | `npm run dev` | `npm run build` | 3000 | — |
+
+If your `package.json` has `dev`, `start`, `build`, or `serve` scripts, grove will use those instead of framework defaults.
 
 ## Configuration
 
@@ -459,23 +506,28 @@ Grove stores its configuration in `.grove/config.json`:
 }
 ```
 
-## Publishing (Prototype Tag)
+## Publishing (For Maintainers)
 
-Until Grove reaches a stable release, publish builds to npm under the `prototype` dist-tag. Steps:
+Grove is currently in prototype phase. To publish a new version:
 
-1. Ensure you are logged into npm (`npm login`) and the working tree is clean.
-2. Bump the version if needed (`npm version prerelease --preid prototype` or similar).
-3. Run the full test suite: `npm run test`.
-4. Publish with the helper script: `npm run release:prototype`.
+1. Ensure you are logged into npm (`npm login`) and the working tree is clean
+2. Bump the version: `npm version prerelease --preid prototype`
+3. Run tests: `npm run test`
+4. Publish: `npm run release:prototype`
 
-The script runs tests again for safety and then executes `npm publish --tag prototype`. Because `package.json` includes `publishConfig.tag = "prototype"`, publishing without the script also defaults to that tag. Consumers can install via `npm install -g grove-cli@prototype`.
+The package is published to npm under the `prototype` dist-tag (configured in `package.json`'s `publishConfig`).
 
 ## Requirements
 
+**Required:**
 - Node.js 18+
-- Git 2.17+ (for worktree support)
-- One of: pnpm, npm, or yarn
-- Optional AI tools for `grove ai`: `claude`, `codex`, or Cursor/VS Code for `grove open`
+- Git 2.17+ (for `git worktree` support)
+- A package manager: pnpm (recommended), npm, or yarn
+
+**Optional (for AI/editor integration):**
+- [Claude Code](https://claude.ai/claude-code) — for `grove ai claude` and `grove spawn`
+- [Codex CLI](https://github.com/openai/codex) — for `grove ai codex`
+- [Cursor](https://cursor.com), [VS Code](https://code.visualstudio.com), or [Zed](https://zed.dev) — for `grove open`
 
 ## License
 
@@ -483,4 +535,15 @@ MIT
 
 ## Contributing
 
-Contributions welcome! Please open an issue or PR.
+Contributions welcome! To get started:
+
+```bash
+git clone https://github.com/blaiszik/grove.git
+cd grove
+npm install
+npm run dev      # Watch mode for development
+npm run test     # Run tests
+npm link         # Install globally for testing
+```
+
+Please open an issue to discuss significant changes before submitting a PR.
